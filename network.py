@@ -7,7 +7,7 @@ class Unet(nn.Module):
     def __init__(self, in_ch, out_ch):
         super().__init__()
 
-        #定义网络模块
+        # 定义网络模块
         self.conv_in_64   = ConvBlock2d(in_ch=in_ch, out_ch=64)
         self.conv_64      = ConvBlock2d(64, 64)
         self.conv_64_128  = ConvBlock2d(64, 128)
@@ -23,7 +23,7 @@ class Unet(nn.Module):
 
         self.conv_512_256 = ConvBlock2d(in_ch=512, out_ch=256)
         self.conv_256_128 = ConvBlock2d(256, 128)
-        self.conv_128_64  = ConvBlock2d(128, 64 )
+        self.conv_128_64  = ConvBlock2d(128, 64)
 
         self.conv_64_out_1x1 = nn.Conv2d(in_channels=64, out_channels=out_ch,
                                          kernel_size=1, stride=1, padding=0)
