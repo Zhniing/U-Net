@@ -25,9 +25,14 @@ def load_train_data(data_path: str):
         t2 = torch.tensor(t2, dtype=torch.float32)
         gt = torch.tensor(gt, dtype=torch.float32)
 
+        gt[gt == 10] = 1  # CSF
+        gt[gt == 150] = 2  # GM
+        gt[gt == 250] = 3  # WM
+
         C, H, W = t1.shape
         patch_size = 64
 
+        # todo: 裁掉0边？
         for c in range(0, C, int((C-patch_size)/4)):
             if c+patch_size > C: break
             for h in range(0, H, int((H-patch_size)/4)):
