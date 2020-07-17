@@ -66,6 +66,6 @@ class Unet(nn.Module):
         d1 = self.conv_64(d1)
 
         output = self.conv_64_out_1x1(d1)
-        # output = F.softmax(output, dim=1)
+        output = F.softmax(output, dim=1)
 
         return output
