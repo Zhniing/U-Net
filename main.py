@@ -4,8 +4,13 @@ from evaluation import *
 from utility import *
 import torch.optim as optim
 from lovasz_losses import lovasz_softmax
+import argparse
 
-gpu_idx = 0
+parser = argparse.ArgumentParser()
+parser.add_argument('GPU', nargs='?', default=0, type=int, help='Assign gpu id')
+args = parser.parse_args()
+
+gpu_idx = args.gpu
 cuda = torch.device(gpu_idx)
 
 val_idx = 0  # validation index
@@ -56,10 +61,10 @@ for epoch in range(100):
         progress_bar(i, iterations)
         print(' %3d/%3d | loss:%.3f | csf:%.3f | gm:%.3f | wm:%.3f'
               % (i + 1, iterations,
-                 total_loss.item() / (i + 1),
-                 csf_dice.item() / (i + 1),
-                 gm_dice.item() / (i + 1),
-                 wm_dice.item() / (i + 1)),
+                 total_loss / (i + 1),
+                 csf_dice / (i + 1),
+                 gm_dice / (i + 1),
+                 wm_dice / (i + 1)),
               end='')
 
         loss.backward()  # Error Backpropagation for computing gradients
@@ -106,10 +111,10 @@ for epoch in range(100):
         wm_dice += get_dice(prediction[:, 3, :, :], wm_gt)
 
         print(' loss:%.3f | csf:%.3f | gm:%.3f | wm:%.3f'
-              % (loss.item() / (i + 1),
-                 csf_dice.item() / (i + 1),
-                 gm_dice.item() / (i + 1),
-                 wm_dice.item() / (i + 1)),
+              % (loss / (i + 1),
+                 csf_dice / (i + 1),
+                 gm_dice / (i + 1),
+                 wm_dice / (i + 1)),
               end='')
 
     print()  # 换行
