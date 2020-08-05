@@ -2,16 +2,25 @@ import glob
 import skimage.io as io
 import torch
 import random
+import numpy as np
 
 
-def load_train_data(data_path: str):
+def load_train_data(data_path: str, validation=0):
     t1_path = glob.glob(data_path + '/*T1.img')
     t2_path = glob.glob(data_path + '/*T2.img')
     gt_path = glob.glob(data_path + '/*label.img')  # ground truth
+    t1_path.sort()
+    t2_path.sort()
+    gt_path.sort()
 
+    # train set
     t1_list = []
     t2_list = []
     gt_list = []
+    # validation set
+    v_t1_list = []
+    v_t2_list = []
+    v_gt_list = []
 
     for i in range(len(gt_path)):
         img_t1 = t1_path[i]  # type : string
@@ -30,15 +39,18 @@ def load_train_data(data_path: str):
         gt[gt == 150] = 2  # GM
         gt[gt == 250] = 3  # WM
 
-        t1, t2, gt = cut_zero(t1, t2, gt)  # 去掉所有维度上全零的层
-        t1_list.append(t1)
-        t2_list.append(t2)
-        gt_list.append(gt)
-
-        # patch_size = 64
+        if i != validation:  # load train set
+            t1, t2, gt = cut_zero(t1, t2, gt)  # 去掉所有维度上全零的层
+            t1_list.append(t1)
+            t2_list.append(t2)
+            gt_list.append(gt)
+        else:  # load validation set
+            v_t1_list.append(t1)
+            v_t2_list.append(t2)
+            v_gt_list.append(gt)
 
     print('load train data successfully')
-    return t1_list, t2_list, gt_list
+    return t1_list, t2_list, gt_list, v_t1_list, v_t2_list, v_gt_list
 
 
 def cut_zero(t1, t2, gt):
@@ -73,7 +85,7 @@ def cut_zero(t1, t2, gt):
 
 
 def random_patch(t1_list, t2_list, gt_list, patch_size):
-    index = random.randint(0, len(gt_list)-1)
+    index = random.randint(0, len(gt_list) - 1)
 
     c = random.randint(0, gt_list[index].shape[0] - patch_size - 1)  # ret a rand num in [a,b]
     h = random.randint(0, gt_list[index].shape[1] - patch_size - 1)
@@ -104,3 +116,23 @@ def make_patch(t1, t2, gt, patch_size):
                 patch_gt.append(gt[c:c + patch_size, h:h + patch_size, w:w + patch_size])
 
     return patch_t1, patch_t2, patch_gt
+
+
+def fuse(output_list, patch_size, shape):
+    C, H, W = shape
+    prediction = np.zeros(shape=[C, 4, H, W])
+    count = np.zeros(shape=[C, 4, H, W])
+
+    i = 0
+    for c in range(0, C, int((C - patch_size) / 4)):
+        if c + patch_size > C: break
+        for h in range(0, H, int((H - patch_size) / 4)):
+            if h + patch_size > H: break
+            for w in range(0, W, int((W - patch_size) / 4)):
+                if w + patch_size > W: break
+                prediction[c:c + patch_size, :, h:h + patch_size, w:w + patch_size] += output_list[i]
+                count[c:c + patch_size, :, h:h + patch_size, w:w + patch_size] += 1
+                i += 1
+
+    prediction = prediction / count  # 直接用除号？
+    return torch.Tensor(prediction)
