@@ -1,7 +1,11 @@
-import torch
+import numpy as np
 
 
 def get_dice(prediction, groundtruth):
-    dice = 2 * prediction.mul(groundtruth).sum() / (prediction.sum() + groundtruth.sum())
+    dice = np.zeros(3)
+    for i in range(len(groundtruth)):
+        p = prediction[:, i+1, :, :]
+        g = groundtruth[i]
+        dice[i] = 2 * p.mul(g).sum() / (p.sum() + g.sum())
 
-    return dice
+    return dice  # csf, gm, wm

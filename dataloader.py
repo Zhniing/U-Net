@@ -5,7 +5,7 @@ import random
 import numpy as np
 
 
-def load_train_data(data_path: str, validation=0):
+def load_data(data_path: str, validation=0):
     t1_path = glob.glob(data_path + '/*T1.img')
     t2_path = glob.glob(data_path + '/*T2.img')
     gt_path = glob.glob(data_path + '/*label.img')  # ground truth
@@ -45,8 +45,9 @@ def load_train_data(data_path: str, validation=0):
             t2_list.append(t2)
             gt_list.append(gt)
         else:  # load validation set
-            v_t1_list.append(t1)
-            v_t2_list.append(t2)
+            patches_t1, patches_t2 = make_patch(t1, t2, 64)  # todo: 换成patch_size变量
+            v_t1_list.append(patches_t1)
+            v_t2_list.append(patches_t2)
             v_gt_list.append(gt)
 
     print('load train data successfully')
@@ -98,11 +99,11 @@ def random_patch(t1_list, t2_list, gt_list, patch_size):
     return t1, t2, gt
 
 
-def make_patch(t1, t2, gt, patch_size):
-    patch_t1 = []
-    patch_t2 = []
-    patch_gt = []
-    C, H, W = gt.shape
+def make_patch(t1, t2, patch_size):
+    patches_t1 = []
+    patches_t2 = []
+    # patches_gt = []
+    C, H, W = t1.shape
 
     # 分块
     for c in range(0, C, int((C - patch_size) / 4)):
@@ -111,14 +112,17 @@ def make_patch(t1, t2, gt, patch_size):
             if h + patch_size > H: break
             for w in range(0, W, int((W - patch_size) / 4)):
                 if w + patch_size > W: break
-                patch_t1.append(t1[c:c + patch_size, h:h + patch_size, w:w + patch_size])
-                patch_t2.append(t2[c:c + patch_size, h:h + patch_size, w:w + patch_size])
-                patch_gt.append(gt[c:c + patch_size, h:h + patch_size, w:w + patch_size])
+                patches_t1.append(t1[c:c + patch_size, h:h + patch_size, w:w + patch_size])
+                patches_t2.append(t2[c:c + patch_size, h:h + patch_size, w:w + patch_size])
+                # patches_gt.append(gt[c:c + patch_size, h:h + patch_size, w:w + patch_size])
 
-    return patch_t1, patch_t2, patch_gt
+    return patches_t1, patches_t2
 
 
 def fuse(output_list, patch_size, shape):
+    i = 0
+    while output_list[i].sum() == 0:
+        i += 1
     C, H, W = shape
     prediction = np.zeros(shape=[C, 4, H, W])
     count = np.zeros(shape=[C, 4, H, W])
@@ -130,9 +134,27 @@ def fuse(output_list, patch_size, shape):
             if h + patch_size > H: break
             for w in range(0, W, int((W - patch_size) / 4)):
                 if w + patch_size > W: break
+                # if output_list[i].sum() != 0:
                 prediction[c:c + patch_size, :, h:h + patch_size, w:w + patch_size] += output_list[i]
                 count[c:c + patch_size, :, h:h + patch_size, w:w + patch_size] += 1
                 i += 1
 
     prediction = prediction / count  # 直接用除号？
     return torch.Tensor(prediction)
+
+
+def make_image(t1, t2):
+    t1 = t1.unsqueeze(dim=1)  # 增加一个维度
+    t2 = t2.unsqueeze(dim=1)
+    return torch.cat((t1, t2), dim=1)
+
+
+def split_gt(gt):
+    csf_gt = torch.zeros_like(gt)
+    gm_gt = torch.zeros_like(gt)
+    wm_gt = torch.zeros_like(gt)
+    csf_gt[gt == 1] = 1
+    gm_gt[gt == 2] = 1
+    wm_gt[gt == 3] = 1
+
+    return csf_gt, gm_gt, wm_gt
