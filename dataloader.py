@@ -3,9 +3,10 @@ import skimage.io as io
 import torch
 import random
 import numpy as np
+import SimpleITK as sitk
 
 
-def load_data(data_path: str, validation=0):
+def load_data(data_path: str, validation=0, patch_size=64):
     t1_path = glob.glob(data_path + '/*T1.img')
     t2_path = glob.glob(data_path + '/*T2.img')
     gt_path = glob.glob(data_path + '/*label.img')  # ground truth
@@ -45,7 +46,7 @@ def load_data(data_path: str, validation=0):
             t2_list.append(t2)
             gt_list.append(gt)
         else:  # load validation set
-            patches_t1, patches_t2 = make_patch(t1, t2, 64)  # todo: 换成patch_size变量
+            patches_t1, patches_t2 = make_patch(t1, t2, patch_size)
             v_t1_list.append(patches_t1)
             v_t2_list.append(patches_t2)
             v_gt_list.append(gt)
@@ -119,9 +120,9 @@ def make_patch(t1, t2, patch_size):
     return patches_t1, patches_t2
 
 
-def fuse(output_list, patch_size, shape):
+def fuse(out_list, patch_size, shape):
     i = 0
-    while output_list[i].sum() == 0:
+    while out_list[i].sum() == 0:
         i += 1
     C, H, W = shape
     prediction = np.zeros(shape=[C, 4, H, W])
@@ -135,12 +136,12 @@ def fuse(output_list, patch_size, shape):
             for w in range(0, W, int((W - patch_size) / 4)):
                 if w + patch_size > W: break
                 # if output_list[i].sum() != 0:
-                prediction[c:c + patch_size, :, h:h + patch_size, w:w + patch_size] += output_list[i]
+                prediction[c:c + patch_size, :, h:h + patch_size, w:w + patch_size] += out_list[i]
                 count[c:c + patch_size, :, h:h + patch_size, w:w + patch_size] += 1
                 i += 1
 
     prediction = prediction / count  # 直接用除号？
-    return torch.Tensor(prediction)
+    return torch.from_numpy(prediction).type(torch.float32)
 
 
 def make_image(t1, t2):
@@ -158,3 +159,10 @@ def split_gt(gt):
     wm_gt[gt == 3] = 1
 
     return csf_gt, gm_gt, wm_gt
+
+
+def save_image(img, src):
+    # io.imsave('./result/' + src + '.img', img, plugin='simpleitk')  # bug:#2292
+    img = sitk.GetImageFromArray(img)
+    path = './result/' + src + '.img'
+    sitk.WriteImage(img, path)

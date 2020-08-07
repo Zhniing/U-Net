@@ -14,9 +14,10 @@ gpu = args.gpu_id
 cuda = torch.device(gpu)
 
 val_idx = 0  # validation index
+patch_size = 64
 data_path = '../dataset/iseg2017/'
 t1_list, t2_list, gt_list, v_t1_list, v_t2_list, v_gt_list = \
-    load_data(data_path, val_idx)  # train & validation set
+    load_data(data_path, val_idx, patch_size)  # train & validation set
 
 model = Unet(in_ch=2, out_ch=4).cuda(gpu)
 # optimizer = optim.SGD(model.parameters(), lr=0.01)
@@ -27,7 +28,6 @@ for epoch in range(100):
     print('epoch', epoch + 1)
     total_loss = 0
     dice = np.zeros(3)
-    patch_size = 64
 
     # train step--------------------------------------------------------
     for i in range(iterations):
@@ -37,6 +37,7 @@ for epoch in range(100):
         gt = gt.cuda(gpu)
 
         output = model(image)
+        _, prediction = torch.max(output, dim=1)
 
         # Dice
         gts = split_gt(gt)
@@ -59,11 +60,14 @@ for epoch in range(100):
         optimizer.step()  # Update parameters, base on the gradients
         optimizer.zero_grad()
 
+    # Save the last train result
+    save_image(prediction.cpu().numpy().astype(np.uint8), 'train')
+
     # validation step-------------------------------------------------------
     with torch.no_grad():  # Reduce memory consumption for computations with 'requires_grad=True'
         print("\nValidate:", end='')
         for i in range(len(v_t1_list)):
-            output_list = []
+            out_list = []
 
             for j in range(len(v_t1_list[i])):
                 t1 = v_t1_list[i][j]
@@ -75,19 +79,21 @@ for epoch in range(100):
 
                     image = torch.cat((t1, t2), dim=1).cuda(gpu)
 
-                    output = model(image)
-                    output_list.append(output.cpu().detach().numpy())  # .detach()脱离梯度计算,不建议用.data
+                    out = model(image)  # out: 每一小块的结果
+                    out_list.append(out.cpu().detach().numpy())  # .detach()脱离梯度计算,不建议用.data
                 else:
-                    output_list.append(torch.zeros_like(output).cpu().numpy())
+                    out_list.append(torch.zeros_like(output).cpu().numpy())
 
-            prediction = fuse(output_list, patch_size, v_gt_list[i].shape).cuda(gpu)
-            gt = v_gt_list[i].cuda(gpu)
-            loss = lovasz_softmax(prediction, gt)
+            output = fuse(out_list, patch_size, v_gt_list[i].shape).cuda(gpu)  # output: 拼成完整图像的结果
+            _, prediction = torch.max(output, dim=1)
 
             # Dice
+            gt = v_gt_list[i].cuda(gpu)
             dice = np.zeros(3)
             gts = split_gt(gt)
-            dice += get_dice(prediction, gts)
+            dice += get_dice(output, gts)
+
+            loss = lovasz_softmax(output, gt)
 
             print(' loss:%.3f | csf:%.3f | gm:%.3f | wm:%.3f'
                   % (loss / (i + 1),
@@ -97,3 +103,6 @@ for epoch in range(100):
                   end='')
 
         print()  # 换行
+
+        # Save the last validation result
+        save_image(prediction.cpu().numpy().astype(np.uint8), 'validation')
