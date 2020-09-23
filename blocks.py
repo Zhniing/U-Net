@@ -7,7 +7,7 @@ class ConvBlock2d(nn.Module):
 
         # 定义网络模块
         self.conv = nn.Sequential(
-            nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=1, padding=1, bias=True),
+            nn.Conv2d(in_ch, out_ch, kernel_size=3, stride=1, padding=1, bias=True),  # 尺寸不变
             nn.BatchNorm2d(out_ch),
             nn.ReLU(inplace=True)  # 原地(in-place)操作: 不占用额外空间
         )

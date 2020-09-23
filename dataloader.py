@@ -42,16 +42,20 @@ def load_data(data_path: str, validation=0, patch_size=64):
 
         if i != validation:  # load train set
             t1, t2, gt = cut_zero(t1, t2, gt)  # 去掉所有维度上全零的层
+            t1, t2 = z_score(t1, t2)  # 数据归一化
+
             t1_list.append(t1)
             t2_list.append(t2)
             gt_list.append(gt)
         else:  # load validation set
-            patches_t1, patches_t2 = make_patch(t1, t2, patch_size)
-            v_t1_list.append(patches_t1)
-            v_t2_list.append(patches_t2)
+            t1, t2 = z_score(t1, t2)  # 数据归一化
+            v_t1_list.append(t1)
+            v_t2_list.append(t2)
             v_gt_list.append(gt)
 
-    print('load train data successfully')
+    print('Load data successfully')
+
+    #  训练集: 去掉全0边的图像, 验证集: 完整图像[256,192,144]
     return t1_list, t2_list, gt_list, v_t1_list, v_t2_list, v_gt_list
 
 
@@ -100,32 +104,43 @@ def random_patch(t1_list, t2_list, gt_list, patch_size):
     return t1, t2, gt
 
 
-def make_patch(t1, t2, patch_size):
-    patches_t1 = []
-    patches_t2 = []
-    # patches_gt = []
-    C, H, W = t1.shape
+def make_patch(t1_list, t2_list, gt_list, p_size):
+    # 对输入list的每一个样本进行分块，返回分块结果: *_list_p[样本][某个样本的小块]
+    t1_list_p = []
+    t2_list_p = []
+    gt_list_p = []
 
-    # 分块
-    for c in range(0, C, int((C - patch_size) / 4)):
-        if c + patch_size > C: break
-        for h in range(0, H, int((H - patch_size) / 4)):
-            if h + patch_size > H: break
-            for w in range(0, W, int((W - patch_size) / 4)):
-                if w + patch_size > W: break
-                patches_t1.append(t1[c:c + patch_size, h:h + patch_size, w:w + patch_size])
-                patches_t2.append(t2[c:c + patch_size, h:h + patch_size, w:w + patch_size])
-                # patches_gt.append(gt[c:c + patch_size, h:h + patch_size, w:w + patch_size])
+    for i in range(len(gt_list)):  # 对于每一个待分块样本
+        tmp_t1 = []
+        tmp_t2 = []
+        tmp_gt = []
 
-    return patches_t1, patches_t2
+        t1 = t1_list[i]
+        t2 = t2_list[i]
+        gt = gt_list[i]
+
+        # 分块
+        C, H, W = gt.shape
+        for c in range(0, C, int((C - p_size) / 4)):
+            if c + p_size > C: break
+            for h in range(0, H, int((H - p_size) / 4)):
+                if h + p_size > H: break
+                for w in range(0, W, int((W - p_size) / 4)):
+                    if w + p_size > W: break
+                    tmp_t1.append(t1[c:c + p_size, h:h + p_size, w:w + p_size])
+                    tmp_t2.append(t2[c:c + p_size, h:h + p_size, w:w + p_size])
+                    tmp_gt.append(gt[c:c + p_size, h:h + p_size, w:w + p_size])
+
+        t1_list_p.append(tmp_t1)
+        t2_list_p.append(tmp_t2)
+        gt_list_p.append(tmp_gt)
+
+    return t1_list_p, t2_list_p, gt_list_p
 
 
-def fuse(out_list, patch_size, shape):
-    i = 0
-    while out_list[i].sum() == 0:
-        i += 1
+def fuse(patches, patch_size, shape):
     C, H, W = shape
-    prediction = np.zeros(shape=[C, 4, H, W])
+    result = np.zeros(shape=[C, 4, H, W])
     count = np.zeros(shape=[C, 4, H, W])
 
     i = 0
@@ -136,12 +151,12 @@ def fuse(out_list, patch_size, shape):
             for w in range(0, W, int((W - patch_size) / 4)):
                 if w + patch_size > W: break
                 # if output_list[i].sum() != 0:
-                prediction[c:c + patch_size, :, h:h + patch_size, w:w + patch_size] += out_list[i]
+                result[c:c + patch_size, :, h:h + patch_size, w:w + patch_size] += patches[i]
                 count[c:c + patch_size, :, h:h + patch_size, w:w + patch_size] += 1
                 i += 1
 
-    prediction = prediction / count  # 直接用除号？
-    return torch.from_numpy(prediction).type(torch.float32)
+    result = result / count  # 直接用除号？
+    return torch.from_numpy(result).type(torch.float32)
 
 
 def make_image(t1, t2):
@@ -166,3 +181,15 @@ def save_image(img, src):
     img = sitk.GetImageFromArray(img)
     path = './result/' + src + '.img'
     sitk.WriteImage(img, path)
+
+
+# 数据归一化 Z-score
+def z_score(t1, t2):
+    mask = t1 > 0
+    mean = t1[mask].mean()
+    std = t1[mask].std()
+    t1 = (t1 - mean) / std
+    mean = t2[mask].mean()
+    std = t2[mask].std()
+    t2 = (t2 - mean) / std
+    return t1, t2
