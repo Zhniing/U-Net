@@ -71,37 +71,85 @@ class Unet(nn.Module):
         return output
 
 
-class FocalLoss2d(nn.Module):
-    def __init__(self, gamma=2, size_average=True):
-        super(FocalLoss2d, self).__init__()
-        self.gamma = gamma
-        self.size_average = size_average
+class Unet2(nn.Module):
+    def __init__(self, in_ch, out_ch):
+        super().__init__()
 
-    def forward(self, logit, target, class_weight=None, type='softmax'):
-        target = target.view(-1, 1).long()
-        if type=='sigmoid':
-            if class_weight is None:
-                class_weight = [1]*2 #[0.5, 0.5]
-            prob   = F.sigmoid(logit)
-            prob   = prob.view(-1, 1)
-            prob   = torch.cat((1-prob, prob), 1)
-            select = torch.FloatTensor(len(prob), 2).zero_().cuda()
-            select.scatter_(1, target, 1.)
-        elif  type=='softmax':
-            B,C,H,W = logit.size()
-            if class_weight is None:
-                class_weight =[1]*C #[1/C]*C
-            logit   = logit.permute(0, 2, 3, 1).contiguous().view(-1, C)
-            prob    = F.softmax(logit,1)
-            select  = torch.FloatTensor(len(prob), C).zero_().cuda()
-            select.scatter_(1, target, 1.)
-        class_weight = torch.FloatTensor(class_weight).cuda().view(-1,1)
-        class_weight = torch.gather(class_weight, 0, target)
-        prob       = (prob*select).sum(1).view(-1,1)
-        prob       = torch.clamp(prob,1e-8,1-1e-8)
-        batch_loss = - class_weight *(torch.pow((1-prob), self.gamma))*prob.log()
-        if self.size_average:
-            loss = batch_loss.mean()
-        else:
-            loss = batch_loss
-        return loss
+        self.down = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.up = nn.Upsample(scale_factor=2, mode='nearest')
+
+        self.l1_encoder = nn.Sequential(
+            ConvBlock2d(in_ch, 64),
+            ConvBlock2d(64, 64)
+        )
+
+        self.l2_encoder = nn.Sequential(
+            ConvBlock2d(64, 128),
+            ConvBlock2d(128, 128)
+        )
+
+        self.l3_encoder = nn.Sequential(
+            ConvBlock2d(128, 256),
+            ConvBlock2d(256, 256)
+        )
+
+        self.l4 = nn.Sequential(
+            ConvBlock2d(256, 512),
+            ConvBlock2d(512, 512)
+        )
+
+        self.up3 = nn.Sequential(
+            self.up,
+            ConvBlock2d(512, 256)
+        )
+
+        self.l3_decoder = nn.Sequential(
+            ConvBlock2d(512, 256),
+            ConvBlock2d(256, 256)
+        )
+
+        self.up2 = nn.Sequential(
+            self.up,
+            ConvBlock2d(256, 128)
+        )
+
+        self.l2_decoder = nn.Sequential(
+            ConvBlock2d(256, 128),
+            ConvBlock2d(128, 128)
+        )
+
+        self.up1 = nn.Sequential(
+            self.up,
+            ConvBlock2d(128, 64)
+        )
+
+        self.l1_decoder = nn.Sequential(
+            ConvBlock2d(128, 64),
+            ConvBlock2d(64, 64)
+        )
+
+        self.conv_1x1 = nn.Conv2d(64, out_ch, kernel_size=1, stride=1, padding=0)
+
+
+    def forward(self, x):
+        # encoder path
+        x1 = self.l1_encoder(x)
+        x2 = self.l2_encoder(self.down(x1))
+        x3 = self.l3_encoder(self.down(x2))
+
+        x4 = self.l4(self.down(x3))
+        d4 = x4
+
+        # decoder path
+        d3 = torch.cat((x3, self.up3(d4)), dim=1)
+        d3 = self.l3_decoder(d3)
+        d2 = torch.cat((x2, self.up2(d3)), dim=1)
+        d2 = self.l2_decoder(d2)
+        d1 = torch.cat((x1, self.up1(d2)), dim=1)
+        d1 = self.l1_decoder(d1)
+
+        # output
+        output = self.conv_1x1(d1)
+        predict = F.softmax(output, dim=1)
+
+        return predict

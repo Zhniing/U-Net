@@ -2,6 +2,7 @@ from network import *
 from dataloader import *
 from evaluation import *
 from utility import *
+from loss import *
 import torch.optim as optim
 from lovasz_losses import lovasz_softmax
 import argparse
@@ -11,30 +12,35 @@ import torchvision
 # torchvision.models.alexnet()
 
 parser = argparse.ArgumentParser()
-parser.add_argument('gpu_id', nargs='?', default=0, type=int, help='Assign gpu id')
-parser.add_argument('log_file', nargs='?', default='', type=str, help='Assign log file name of tensorboard')
+parser.add_argument('--gpu_id', '-gpu', default=0, type=int, help='Assign gpu id (default: 0)')
+parser.add_argument('--log_file', '-log',  default='nolog', type=str,
+                    help='Assign log file name of tensorboardX (default: no log)')
+
 args = parser.parse_args()
 
 gpu = args.gpu_id
-cuda = torch.device(gpu)
+# cuda = torch.device(gpu)
+torch.cuda.set_device(gpu)
 
-val_idx = 0  # validation index
+val_idx = 0  # validation index 对比实验要固定验证集
 patch_size = 64
 data_path = '../dataset/iseg2017/'
 t1_list, t2_list, gt_list, v_t1_list, v_t2_list, v_gt_list = \
     load_data(data_path, val_idx, patch_size)  # train & validation set
 
-model = Unet(in_ch=2, out_ch=4).cuda(gpu)
+model = Unet2(in_ch=2, out_ch=4).cuda(gpu)
 Focal = FocalLoss2d()
+soft_dice = SoftDiceLoss()
 # optimizer = optim.SGD(model.parameters(), lr=0.01)
 optimizer = optim.Adam(model.parameters(), lr=0.0002, weight_decay=0.0005)
+scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.95)
 
 # 是否写入tensorboard记录
 log_file = args.log_file
 if log_file != 'nolog':
     log_on = True
     if log_file != '':
-        log_file = './runs/' + log_file
+        log_file = './runs/' + log_file + '/'
     write = SummaryWriter(log_file)
 else:
     write = 0
@@ -45,7 +51,9 @@ else:
 # write.add_graph(model, dummy_input)
 
 iterations = 150  # 一个epoch中的迭代次数
-for epoch in range(100):
+n_epoch = 100
+lr = 0.0002
+for epoch in range(n_epoch):
     print('epoch', epoch)
     total_loss = 0
     dice = np.zeros(3)
@@ -57,8 +65,11 @@ for epoch in range(100):
         t1_p, t2_p, gt_p = random_patch(t1_list, t2_list, gt_list, patch_size)
 
         image = make_image(t1_p, t2_p).cuda(gpu)
+        # t1_p = t1_p.unsqueeze(dim=1).cuda(gpu)
+        # t2_p = t2_p.unsqueeze(dim=1).cuda(gpu)
         gt_p = gt_p.cuda(gpu)
 
+        optimizer.zero_grad()
         output = model(image)
         _, prediction = torch.max(output, dim=1)
 
@@ -66,8 +77,10 @@ for epoch in range(100):
         gts_p = split_gt(gt_p)
         dice += get_dice(output, gts_p)
 
-        loss_p = lovasz_softmax(output, gt_p)
-        # loss += Focal(output, gt, class_weight=[0.1, 0.4, 0.2, 0.3])
+        # Loss
+        loss_p = 0
+        loss_p += lovasz_softmax(output, gt_p)
+        loss_p += Focal(output, gt_p, class_weight=[0.1, 0.4, 0.2, 0.3])
         total_loss += loss_p.item()
 
         # 打印结果
@@ -82,12 +95,22 @@ for epoch in range(100):
 
         loss_p.backward()  # Error Backpropagation for computing gradients
         optimizer.step()  # Update parameters, base on the gradients
-        optimizer.zero_grad()
 
-    # Save the last train result
-    save_image(prediction.cpu().numpy().astype(np.uint8), 'train')  # 保存最后一个训练（块）
+    # 学习率衰减
+    if (epoch + 1) > (n_epoch - 30):
+        lr -= (0.0002 / 30)
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
 
+    # scheduler.step()
+    print(" lr:", scheduler.get_lr(), end='')
     if log_on:
+        write.add_scalar("Learning Rate/1", scheduler.get_lr(), epoch)
+        write.add_scalar("Learning Rate/2", optimizer.param_groups[0]['lr'], epoch)
+
+        # Save the last train result
+        save_image(prediction.cpu().numpy().astype(np.uint8), log_file+'train')  # 保存最后一个训练（块）
+
         # Write train loss log
         write.add_scalar('Loss/train', total_loss / 150, epoch)
         write.add_scalar('Dice_train/CSF', dice[0] / 150, epoch)
@@ -96,9 +119,11 @@ for epoch in range(100):
         write.add_scalar('Dice_train/mean', dice.mean() / 150, epoch)
 
     # validation step-------------------------------------------------------
+    torch.cuda.empty_cache()
     model.eval()  # 用了Batch Normalization就一定要区分训练和验证过程，因为验证和训练时BN的计算方式不同
     with torch.no_grad():  # Reduce memory consumption for computations with 'requires_grad=True'
         total_loss = 0
+        i = 0
         for i in range(len(v_gt_list)):  # 有多个验证样本
             loss = 0
             out_list_p = []
@@ -113,11 +138,15 @@ for epoch in range(100):
 
                 if gt_p.sum() != 0:  # 非纯背景块
                     image = make_image(t1_p, t2_p).cuda(gpu)
+                    # t1_p = t1_p.unsqueeze(dim=1).cuda(gpu)
+                    # t2_p = t2_p.unsqueeze(dim=1).cuda(gpu)
 
                     out_p = model(image)  # out_p: 每一小块的分割结果
 
                     # 每块Loss
-                    loss_p = lovasz_softmax(out_p, gt_p)
+                    loss_p = 0
+                    loss_p += lovasz_softmax(out_p, gt_p)
+                    loss_p += Focal(output, gt_p, class_weight=[0.1, 0.4, 0.2, 0.3])
                     loss += loss_p  # 一个样本的总loss
 
                     # 保存每个块不能放在gpu里，会爆显存
@@ -141,10 +170,11 @@ for epoch in range(100):
 
         print()  # 换行
 
-        # Save the last validation result
-        save_image(prediction.cpu().numpy().astype(np.uint8), 'validation')  # 保存最后一个预测（图）
-
         if log_on:
+
+            # Save the last validation result
+            save_image(prediction.cpu().numpy().astype(np.uint8), log_file+'validation')  # 保存最后一个预测（图）
+
             # Write validation loss log
             write.add_scalar('Loss/val', total_loss / (i + 1), epoch)
             write.add_scalar('Dice_val/CSF', dice[0] / (i + 1), epoch)
@@ -152,8 +182,12 @@ for epoch in range(100):
             write.add_scalar('Dice_val/WM', dice[2] / (i + 1), epoch)
             write.add_scalar('Dice_val/mean', dice.mean() / (i+1), epoch)
 
+        torch.cuda.empty_cache()
+
     if log_on:
         write.flush()
+
+    # validation over ------- next epoch
 
 if log_on:
     write.close()

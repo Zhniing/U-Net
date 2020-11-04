@@ -179,7 +179,8 @@ def split_gt(gt):
 def save_image(img, src):
     # io.imsave('./result/' + src + '.img', img, plugin='simpleitk')  # bug:#2292
     img = sitk.GetImageFromArray(img)
-    path = './result/' + src + '.img'
+    # path = './result/' + src + '.img'
+    path = src + '.img'
     sitk.WriteImage(img, path)
 
 
