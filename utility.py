@@ -1,4 +1,5 @@
 import time
+import torch
 
 bar_len = 40
 
@@ -7,6 +8,7 @@ last_time = begin_time
 
 
 def progress_bar(i, n):
+    """Print progress bar."""
     global begin_time, last_time
     now = time.time()
     total_time = now - begin_time
@@ -19,6 +21,7 @@ def progress_bar(i, n):
 
 
 def time_format(second):
+    """Transfer "second" to the format of "hour/minute/second/millisecond"."""
     # second = int(second)
     h = int(second // 3600)
     m = int(second % 3600 // 60)
@@ -34,3 +37,18 @@ def time_format(second):
     if ans == '' and ms != 0:  # 少于1s则显示ms
         ans += str(ms) + 'ms'
     return ans
+
+
+def get_model_size(model):
+    """Return the number of model parameters."""
+    num_params = 0
+    for p in model.parameters():
+        num_params += p.numel()
+    return num_params
+
+
+def get_wrong(predict, gt):
+    """计算出一个分割错误的mask"""
+    mask = torch.zeros_like(gt)
+    mask[predict != gt] = gt[predict != gt]
+    return mask

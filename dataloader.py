@@ -32,9 +32,13 @@ def load_data(data_path: str, validation=0, patch_size=64):
         t2 = io.imread(img_t2, plugin='simpleitk')
         gt = io.imread(img_gt, plugin='simpleitk')
 
-        t1 = torch.tensor(t1, dtype=torch.float32)  # tyep : torch.Tensor
-        t2 = torch.tensor(t2, dtype=torch.float32)
-        gt = torch.tensor(gt, dtype=torch.float32)
+        # t1 = torch.tensor(t1, dtype=torch.float32)  # tyep : torch.Tensor
+        # t2 = torch.tensor(t2, dtype=torch.float32)
+        # gt = torch.tensor(gt, dtype=torch.float32)
+
+        t1 = torch.from_numpy(t1).type(torch.float32)  # tyep : torch.Tensor
+        t2 = torch.from_numpy(t2).type(torch.float32)
+        gt = torch.from_numpy(gt).type(torch.float32)
 
         gt[gt == 10] = 1  # CSF
         gt[gt == 150] = 2  # GM

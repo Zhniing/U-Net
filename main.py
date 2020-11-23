@@ -29,6 +29,7 @@ t1_list, t2_list, gt_list, v_t1_list, v_t2_list, v_gt_list = \
     load_data(data_path, val_idx, patch_size)  # train & validation set
 
 model = Unet2(in_ch=2, out_ch=4).cuda(gpu)
+print("The number of parameters:", get_model_size(model))
 Focal = FocalLoss2d()
 soft_dice = SoftDiceLoss()
 # optimizer = optim.SGD(model.parameters(), lr=0.01)
@@ -47,17 +48,24 @@ else:
     log_on = False
 
 # tensorboardX可视化网络结构
-# dummy_input = (torch.rand(64, 2, 64, 64).type(torch.float32).cuda(gpu),)
-# write.add_graph(model, dummy_input)
+if log_on:
+    # dummy_input1 = (torch.rand(64, 1, 64, 64).type(torch.float32).cuda(gpu),
+    #                 torch.rand(64, 1, 64, 64).type(torch.float32).cuda(gpu))
+    dummy_input1 = (torch.rand(64, 2, 64, 64).type(torch.float32).cuda(gpu),)
+    write.add_graph(model, dummy_input1)
 
 iterations = 150  # 一个epoch中的迭代次数
 n_epoch = 100
 lr = 0.0002
+
+best_dice = np.zeros(3)  # 最高的验证集 mean Dice
+save_flag = False
+
 for epoch in range(n_epoch):
     print('epoch', epoch)
     total_loss = 0
     dice = np.zeros(3)
-    prediction = 0
+    predict = 0
 
     # train step--------------------------------------------------------
     model.train()
@@ -71,7 +79,8 @@ for epoch in range(n_epoch):
 
         optimizer.zero_grad()
         output = model(image)
-        _, prediction = torch.max(output, dim=1)
+        # output = model(t1_p, t2_p)
+        _, predict = torch.max(output, dim=1)
 
         # Dice
         gts_p = split_gt(gt_p)
@@ -80,7 +89,7 @@ for epoch in range(n_epoch):
         # Loss
         loss_p = 0
         loss_p += lovasz_softmax(output, gt_p)
-        loss_p += Focal(output, gt_p, class_weight=[0.1, 0.4, 0.2, 0.3])
+        loss_p += Focal(output, gt_p, class_weight=[0.1, 0.4, 0.2, 0.3])  # 类别权重 是按 类别数量(面积) 来设置的
         total_loss += loss_p.item()
 
         # 打印结果
@@ -96,7 +105,7 @@ for epoch in range(n_epoch):
         loss_p.backward()  # Error Backpropagation for computing gradients
         optimizer.step()  # Update parameters, base on the gradients
 
-    # 学习率衰减
+    # lr decay
     if (epoch + 1) > (n_epoch - 30):
         lr -= (0.0002 / 30)
         for param_group in optimizer.param_groups:
@@ -109,7 +118,7 @@ for epoch in range(n_epoch):
         write.add_scalar("Learning Rate/2", optimizer.param_groups[0]['lr'], epoch)
 
         # Save the last train result
-        save_image(prediction.cpu().numpy().astype(np.uint8), log_file+'train')  # 保存最后一个训练（块）
+        save_image(predict.cpu().numpy().astype(np.uint8), log_file+'train')  # 保存最后一个训练（块）
 
         # Write train loss log
         write.add_scalar('Loss/train', total_loss / 150, epoch)
@@ -131,6 +140,7 @@ for epoch in range(n_epoch):
             v_t1_list_p, v_t2_list_p, v_gt_list_p = \
                 make_patch(v_t1_list, v_t2_list, v_gt_list, patch_size)
 
+            j = 0
             for j in range(len(v_gt_list_p[i])):  # 每个验证样本 第i个验证样本的第j块
                 t1_p = v_t1_list_p[i][j]
                 t2_p = v_t2_list_p[i][j]
@@ -142,6 +152,7 @@ for epoch in range(n_epoch):
                     # t2_p = t2_p.unsqueeze(dim=1).cuda(gpu)
 
                     out_p = model(image)  # out_p: 每一小块的分割结果
+                    # out_p = model(t1_p, t2_p)  # out_p: 每一小块的分割结果
 
                     # 每块Loss
                     loss_p = 0
@@ -155,13 +166,19 @@ for epoch in range(n_epoch):
                     out_list_p.append(torch.zeros_like(output).cpu().numpy())  # 直接压入全0块
 
             output = fuse(out_list_p, patch_size, [256, 192, 144]).cuda(gpu)  # output: 拼成完整图像的结果
-            _, prediction = torch.max(output, dim=1)  # 将预测概率值转变为预测结果: [0, 1, 2, 3]
+            _, predict = torch.max(output, dim=1)  # 将预测概率值转变为预测结果: [0, 1, 2, 3]
             total_loss += loss / (j + 1)
 
             # 整体Dice
             v_gt = v_gt_list[i].cuda(gpu)
             v_gts = split_gt(v_gt)
             dice = get_dice(output, v_gts)
+            if dice.mean() > best_dice.mean():
+                best_dice = dice
+                save_flag = True
+
+            # Get the wrong mask
+            wrong_mask = get_wrong(predict, v_gt.type(torch.long))
 
             print('\nval%d: loss:%.3f | csf:%.3f | gm:%.3f | wm:%.3f'
                   % (i, loss / (j + 1),
@@ -171,9 +188,16 @@ for epoch in range(n_epoch):
         print()  # 换行
 
         if log_on:
-
-            # Save the last validation result
-            save_image(prediction.cpu().numpy().astype(np.uint8), log_file+'validation')  # 保存最后一个预测（图）
+            if save_flag:
+                save_flag = False
+                # Set the best validation result
+                predic_image = (predict.cpu().numpy().astype(np.uint8), log_file+'valid'+str(i)+'-'+str(epoch))
+                # save_image(predict.cpu().numpy().astype(np.uint8),
+                #             log_file+'valid'+str(i)+'-'+str(epoch))  # 保存最后一个预测（图）
+                # Set the wrong image
+                wrong_image = (wrong_mask.cpu().numpy().astype(np.uint8), log_file+'wrong'+str(i)+'-'+str(epoch))
+                # save_image(wrong_mask.cpu().numpy().astype(np.uint8),
+                #             log_file+'wrong'+str(i)+'-'+str(epoch))  # 保存相应的错误图
 
             # Write validation loss log
             write.add_scalar('Loss/val', total_loss / (i + 1), epoch)
@@ -190,4 +214,9 @@ for epoch in range(n_epoch):
     # validation over ------- next epoch
 
 if log_on:
+    # Save the best validation result
+    save_image(predic_image[0], predic_image[1])  # 保存最好的一个预测（图）
+    # Save the wrong mask
+    save_image(wrong_image[0], wrong_image[1])  # 保存相应的错误图
+
     write.close()
